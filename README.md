@@ -35,7 +35,7 @@ For power users, a CLI version was previously available; its compatibility with 
 
 ## 📥 Downloads
 
-Pre‑built binaries can be found on the **Releases** page.
+Pre‑built binaries can be found on the **[Releases](https://github.com/OzieX-Git/adblock-dns-webinterface/releases/tag/v2.0.0)** page.
 
 - `adblock-webinterface-tray-windows-amd64.exe` – Windows tray application with WebView.
 

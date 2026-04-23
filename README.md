@@ -37,7 +37,7 @@ For power users, a CLI version was previously available; its compatibility with 
 
 Pre‑built binaries can be found on the **Releases** page.
 
-- `adblock-dns-windows-amd64.exe` – Windows tray application with WebView.
+- `adblock-webinterface-tray-windows-amd64.exe` – Windows tray application with WebView.
 
 (If you need the CLI, please open an issue – I will provide a build or investigate the current state.)
 

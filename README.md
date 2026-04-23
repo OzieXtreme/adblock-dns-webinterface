@@ -1,3 +1,5 @@
+> **This project is a continuation and major update of the original [adblock-dns](https://github.com/dmtkfs/adblock-dns) by [dmtkfs](https://github.com/dmtkfs).**
+
 # Adblock‑DNS
 
 **Adblock‑DNS** is a lightweight, system‑level DNS proxy that blocks known ad‑serving domains. It’s “set and forget” for non‑technical users via a Windows tray app, and includes a CLI for power users.

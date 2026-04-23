@@ -1,4 +1,3 @@
-
 package proxy
 
 import (
@@ -32,11 +31,18 @@ type Options struct {
 }
 
 var (
+	// Dry‑run Deduplizierung: speichert bereits geloggte Domains
+	dryRunLogged sync.Map
+
+	// Statistiken
+	blockedTotal  atomic.Uint64 // echte Blockierungen
+	dryRunBlocked atomic.Uint64 // Dry‑run Blockierungen (gezählt, nicht geloggt)
+
 	// dynamic state
 	currentOpts Options
 	optsMu      sync.RWMutex
 
-	blockedSet  atomic.Value // holds map[string]struct{}
+	blockedSet   atomic.Value // holds map[string]struct{}
 	whitelistSet atomic.Value // holds map[string]struct{}
 
 	srvUDP *dns.Server
@@ -61,16 +67,24 @@ var (
 		},
 	}
 
-	blocklistURLs = []string{
-		"https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
-		"https://adaway.org/hosts.txt",
-	}
-
-	etagCache = struct{
+	etagCache = struct {
 		sync.Mutex
 		m map[string]string
 	}{m: make(map[string]string)}
 )
+
+var statsEnabled bool = true
+
+var (
+	hourlyBlocked atomic.Uint64
+	dailyBlocked  atomic.Uint64
+	domainCounts  sync.Map
+)
+
+// Stats gibt die aktuellen Zähler zurück (exportierte Funktion)
+func Stats() (blocked uint64, dryRun uint64) {
+	return blockedTotal.Load(), dryRunBlocked.Load()
+}
 
 func init() {
 	// defaults
@@ -244,6 +258,72 @@ func loadWhitelist() {
 	log.Printf("whitelist loaded — %d entries", len(tmp))
 }
 
+// loadLocalBlocklist liest eine Datei "blocklist.txt" im EXE-Verzeichnis
+// und gibt die darin enthaltenen Domains als map zurück.
+func loadLocalBlocklist() map[string]struct{} {
+	path := filepath.Join(exeDir(), "blocklist.txt")
+	f, err := os.Open(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("local blocklist read error: %v", err)
+		}
+		return make(map[string]struct{}) // leere Map statt nil
+	}
+	defer f.Close()
+
+	tmp := make(map[string]struct{})
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		var cand string
+		switch len(fields) {
+		case 1:
+			cand = fields[0]
+		default:
+			cand = fields[1]
+		}
+		if d, err := normalizeDomain(cand); err == nil {
+			tmp[d] = struct{}{}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		log.Printf("local blocklist scan error: %v", err)
+	}
+	log.Printf("local blocklist loaded — %d entries", len(tmp))
+	return tmp
+}
+
+func loadSources() []string {
+	path := filepath.Join(exeDir(), "sources.txt")
+	f, err := os.Open(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("sources read error: %v", err)
+		}
+		return nil
+	}
+	defer f.Close()
+
+	var urls []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		urls = append(urls, line)
+	}
+	if err := sc.Err(); err != nil {
+		log.Printf("sources scan error: %v", err)
+	}
+	log.Printf("sources loaded — %d URLs", len(urls))
+	return urls
+}
+
 func fetchURL(url string) (*http.Response, error) {
 	req, _ := http.NewRequest("GET", url, nil)
 	etagCache.Lock()
@@ -256,8 +336,22 @@ func fetchURL(url string) (*http.Response, error) {
 
 func refresh() {
 	tmp := make(map[string]struct{})
-	total := 0
-	for _, url := range blocklistURLs {
+
+	// Lokale Blockliste einlesen
+	localBlocklist := loadLocalBlocklist()
+	for d := range localBlocklist {
+		tmp[d] = struct{}{}
+	}
+
+	// Quellen aus sources.txt laden
+	sources := loadSources()
+	if len(sources) == 0 {
+		log.Println("No sources found (sources.txt missing or empty) — using only local blocklist.")
+	} else {
+		log.Printf("Using %d sources from sources.txt", len(sources))
+	}
+
+	for _, url := range sources {
 		resp, err := fetchURL(url)
 		if err != nil {
 			log.Printf("fetch error %s: %v", url, err)
@@ -279,7 +373,6 @@ func refresh() {
 				if line == "" || strings.HasPrefix(line, "#") {
 					continue
 				}
-				// hosts format: "ip domain" or just "domain"
 				fields := strings.Fields(line)
 				var cand string
 				switch len(fields) {
@@ -290,7 +383,6 @@ func refresh() {
 				}
 				if d, err := normalizeDomain(cand); err == nil {
 					tmp[d] = struct{}{}
-					total++
 				}
 			}
 			if err := sc.Err(); err != nil {
@@ -320,13 +412,7 @@ func inSet(set map[string]struct{}, q string, mode string) bool {
 	if mode != "suffix" {
 		return false
 	}
-	// suffix: check ".example.com" style boundaries
-	for i := strings.Index(q, "."); i > 0; i = strings.Index(q, ".") {
-		// BUG: strings.Index returns first '.'; we want next segments iteratively.
-		// Instead, walk from first label to the right by trimming leftmost label repeatedly.
-		break
-	}
-	// implement trim loop
+	// Alle übergeordneten Domains prüfen (z.B. "foo.bar.example.com" → "bar.example.com" → "example.com")
 	for {
 		dot := strings.Index(q, ".")
 		if dot == -1 {
@@ -353,7 +439,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg, opts Options) {
 		return
 	}
 
-	// Whitelist first
+	// Whitelist zuerst
 	if inSet(getWhitelist(), name, opts.MatchMode) {
 		if opts.Verbose {
 			log.Printf("[WL] %s", name)
@@ -367,8 +453,21 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg, opts Options) {
 		return
 	}
 
-	// Block check
-	if inSet(getBlocked(), name, opts.MatchMode) && !opts.DryRun {
+	blocked := inSet(getBlocked(), name, opts.MatchMode)
+
+	// Echte Blockierung (wenn nicht Dry‑run)
+	if blocked && !opts.DryRun {
+		// DEBUG-Ausgabe hinzufügen
+		log.Printf("[STATS-DEBUG] Would block %s (hourlyBefore=%d)", name, hourlyBlocked.Load())
+
+		blockedTotal.Add(1)
+		if statsEnabled {
+			hourlyBlocked.Add(1)
+			dailyBlocked.Add(1)
+			val, _ := domainCounts.LoadOrStore(name, new(atomic.Uint64))
+			val.(*atomic.Uint64).Add(1)
+			log.Printf("[STATS-DEBUG] hourlyBlocked now %d", hourlyBlocked.Load())
+		}
 		if opts.Verbose {
 			log.Printf("[BL] %s", name)
 		}
@@ -379,7 +478,6 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg, opts Options) {
 		case "nxdomain":
 			m.Rcode = dns.RcodeNameError
 		default: // "null"
-			// Answer zeros for A/AAAA; for other types, return NODATA (NOERROR, empty answer)
 			switch q.Qtype {
 			case dns.TypeA:
 				rr, _ := dns.NewRR(fmt.Sprintf("%s 0 IN A 0.0.0.0", dns.Fqdn(name)))
@@ -387,21 +485,37 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg, opts Options) {
 			case dns.TypeAAAA:
 				rr, _ := dns.NewRR(fmt.Sprintf("%s 0 IN AAAA ::", dns.Fqdn(name)))
 				m.Answer = append(m.Answer, rr)
-			default:
-				// NODATA: no answers, no error
 			}
 		}
 		_ = w.WriteMsg(m)
 		return
 	}
 
-	// Forward (either not blocked, or DryRun)
+	// Dry‑run: Loggen und Zähler erhöhen, aber nur einmal pro Domain
+	if blocked && opts.DryRun {
+		domainKey := name
+		if _, loaded := dryRunLogged.LoadOrStore(domainKey, struct{}{}); !loaded {
+			log.Printf("[DRY-RUN] would block %s", name)
+		}
+		dryRunBlocked.Add(1)
+	}
+
+	// Optional: Forward‑Logging bei Verbose
+	if opts.Verbose && !blocked {
+		log.Printf("[FWD] %s", name)
+	}
+
+	// Anfrage an Upstream weiterleiten
 	resp, err := forwardQuery(r, opts.Upstreams)
 	if err != nil {
 		_ = w.WriteMsg(new(dns.Msg).SetRcode(r, dns.RcodeServerFailure))
 		return
 	}
 	_ = w.WriteMsg(resp)
+}
+
+func SetStatsEnabled(enabled bool) {
+	statsEnabled = enabled
 }
 
 func forwardQuery(r *dns.Msg, upstreams []string) (*dns.Msg, error) {
@@ -430,4 +544,55 @@ func forwardQuery(r *dns.Msg, upstreams []string) (*dns.Msg, error) {
 		lastErr = errors.New("no upstreams configured")
 	}
 	return nil, lastErr
+}
+
+// === NEUE EXPORTIERTE FUNKTIONEN FÜR STATISTIKEN (FEHLTEN BISHER) ===
+
+// PopHourlyBlocked gibt den aktuellen stündlichen Blockzähler zurück und setzt ihn auf 0.
+func PopHourlyBlocked() uint64 {
+	return hourlyBlocked.Swap(0)
+}
+
+// PopDailyBlocked gibt den aktuellen täglichen Blockzähler zurück und setzt ihn auf 0.
+func PopDailyBlocked() uint64 {
+	return dailyBlocked.Swap(0)
+}
+
+// PopDomainCounts gibt eine Kopie der pro Domain gezählten Blockierungen zurück
+// und setzt alle Zähler auf 0 zurück.
+func PopDomainCounts() map[string]uint64 {
+	result := make(map[string]uint64)
+	domainCounts.Range(func(key, value any) bool {
+		domain := key.(string)
+		counter := value.(*atomic.Uint64)
+		count := counter.Swap(0)
+		if count > 0 {
+			result[domain] = count
+		}
+		// Wenn count == 0, verbleibt der Eintrag in domainCounts, kann aber später überschrieben werden.
+		return true
+	})
+	return result
+}
+
+// GetCurrentOpts gibt eine Kopie der aktuell gespeicherten Proxy‑Optionen
+// thread‑safe zurück.
+func GetCurrentOpts() Options {
+	optsMu.RLock()
+	defer optsMu.RUnlock()
+	return currentOpts
+}
+func CleanupDomainCounts() {
+	var deleted int
+	domainCounts.Range(func(key, value any) bool {
+		counter := value.(*atomic.Uint64)
+		if counter.Load() == 0 {
+			domainCounts.Delete(key)
+			deleted++
+		}
+		return true
+	})
+	if deleted > 0 {
+		log.Printf("cleaned up %d stale domain stats entries", deleted)
+	}
 }

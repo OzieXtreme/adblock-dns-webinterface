@@ -30,6 +30,7 @@ For power users, a CLI version was previously available; its compatibility with 
 - **Status icon** in the system tray: green (running), blue (dry‑run), red (stopped).
 - **Delayed tray menu** – “Quit” and “WebView” are disabled for a few seconds on start to prevent accidental clicks while the proxy initialises.
 - **Tray app (Windows):** Start/Stop, Dry‑run toggle, Webview toggle, status (last refresh).
+- **Debuging myself**: I have thoroughly reviewed and tested these features myself. If you notice any bugs, please open an issue thread so I can fix them.
 
 ---
 

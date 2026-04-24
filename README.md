@@ -211,7 +211,7 @@ Symantec not only analyses static properties, but also **behavioural attributes*
 3. **Obfuscated browser launch**  
    `openBrowser()` starts the default browser using `rundll32` – a method also employed by malware to send silent HTTP requests.
 
-   **Why do 4 out of 72 engines flag this file?**  
+## Why do 4 out of 72 engines flag this file?  
 The app needs **administrator privileges** to change your DNS settings. To do that it:
 
 - Starts itself with **hidden elevated rights** (like many system tools do)
@@ -223,7 +223,6 @@ The app needs **administrator privileges** to change your DNS settings. To do th
 These are all normal behaviours for DNS‑based ad blockers, but they overlap with techniques used by some malware.  
 **The app never sends your data anywhere – everything stays on your computer.**
 
-Click the arrow below to see a detailed breakdown of each detection and the corresponding code locations.
 
 </details>
 

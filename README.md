@@ -18,7 +18,7 @@ For power users, a CLI version was previously available; its compatibility with 
 - **Local blocklist** (`blocklist.txt`) and **remote sources** (`sources.txt`) – refreshed on startup and periodically.
 - **Dry‑run mode** – logs what would be blocked without actually blocking.
 - **Portable logs**: `adblock.log` lives next to the executable.
-- **Comprehensive WebView (GUI** 🖥️**)**:
+- **Comprehensive WebView (GUI 🖥️)**:
   - Edit blocklist, sources and whitelist directly in the browser.
   - View and filter the application log in real time.
   - Configure upstream DNS servers (reachability check, reset to defaults, automatic proxy restart).

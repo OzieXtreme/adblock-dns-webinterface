@@ -141,76 +141,76 @@ This software is provided **as-is** for educational and personal use only. The a
 
 ## 🔍 1. Bkav Pro – `W64.AIDetectMalware`
 
-**Typ der Erkennung:** Generische KI‑Erkennung für Windows‑Binaries.  
-**Was löst den Alarm aus?**
+**Detection type:** Generic AI-based detection for Windows binaries.  
+**What triggers the alert?**
 
-Ihre App führt mehrere Aktionen aus, die für Malware typisch sind, aber legitime Administrationsaufgaben darstellen:
+Your application performs several actions that are typical of malware, but are legitimate administrative tasks:
 
 - **`runAsAdmin()`** (`main.go`)  
-  `windows.ShellExecute` mit `verb = "runas"` und `SW_HIDE` startet das Programm mit Administratorrechten und verstecktem Fenster.  
-  Ein Angreifer könnte dies nutzen, um eine Schadsoftware unbemerkt mit hohen Rechten auszuführen.
+  `windows.ShellExecute` with `verb = "runas"` and `SW_HIDE` launches the program with administrator privileges and a hidden window.  
+  An attacker could use this to run malicious software with high privileges without the user noticing.
 
 - **`isAdmin()`** (`main.go`)  
-  Der PowerShell‑Befehl prüft die Zugehörigkeit zur Administratorgruppe.
+  The PowerShell command checks membership in the Administrators group.
 
-- **`runPowerShellHidden()`** sowie **`runNetsh()`**  
-  Beide führen Systembefehle (`netsh`, `ipconfig`) mit **verstecktem Konsolenfenster** (`HideWindow: true`) aus.  
-  Das ist exakt das Verhalten von Malware, die ohne Wissen des Benutzers Systemeinstellungen manipuliert.
+- **`runPowerShellHidden()`** and **`runNetsh()`**  
+  Both execute system commands (`netsh`, `ipconfig`) with a **hidden console window** (`HideWindow: true`).  
+  This is exactly the behaviour of malware that manipulates system settings without the user's knowledge.
 
-Bkavs KI‑Modell erkennt genau diese Kombination – versteckte Fenster + Admin‑Rechte + Systembefehle – und stuft die Datei als verdächtig ein.
+Bkav’s AI model recognises precisely this combination – hidden windows + admin rights + system commands – and flags the file as suspicious.
 
 ---
 
 ## 🧠 2. CrowdStrike Falcon – `Win/malicious_confidence_70% (D)`
 
-**Typ:** Maschinelles Lernen mit mittlerer Konfidenz (70 %).  
-**Auslöser:** Ein ML‑Modell bewertet mehrere Verhaltensmuster gemeinsam.
+**Type:** Machine-learning-based detection with medium confidence (70%).  
+**Trigger:** A machine‑learning model evaluates several behavioural patterns together.
 
-| Verhalten | Code‑Stelle | Warum es verdächtig wirkt |
-|-----------|-------------|---------------------------|
-| **DNS‑Einträge des Systems ändern** | `setDNSStatic()`, `restoreOriginalDNSSettings()` | Malware installiert oft eigene DNS‑Server, um Phishing zu betreiben oder Werbung umzuleiten. |
-| **DNS‑Cache leeren** | `flushDNS()` | Um die Änderungen sofort wirksam zu machen, was typisch für DNS‑Hijacker ist. |
-| **Eigenen DNS‑Server starten (Port 53)** | `proxy.Start()` (in `proxy.go`) | Lauscht auf dem Standard‑DNS‑Port – ein Man-in-the-Middle‑ähnliches Verhalten. |
-| **HTTP‑Server auf 127.0.0.1:8080** | `startConfigEditor()` | Lokaler Webserver kann als Backdoor interpretiert werden. |
-| **Registry‑Änderungen (Autostart)** | `setAutostart()` | Persistenz über `HKCU\...\Run` – klassisches Autostart‑Verhalten vieler Trojaner. |
+| Behaviour | Code location | Why it appears suspicious |
+|-----------|---------------|----------------------------|
+| **Changing system DNS entries** | `setDNSStatic()`, `restoreOriginalDNSSettings()` | Malware often installs its own DNS servers for phishing or ad redirection. |
+| **Flushing the DNS cache** | `flushDNS()` | To apply changes immediately – typical of DNS hijackers. |
+| **Starting a local DNS server (port 53)** | `proxy.Start()` (in `proxy.go`) | Listening on the standard DNS port resembles a man‑in‑the‑middle attack. |
+| **HTTP server on 127.0.0.1:8080** | `startConfigEditor()` | A local web server can be interpreted as a backdoor. |
+| **Registry changes (autostart)** | `setAutostart()` | Persistence via `HKCU\...\Run` – classic autostart behaviour of many Trojans. |
 
-All diese Aktionen sind notwendig, um einen systemweiten Werbeblocker zu realisieren. CrowdStrike sieht jedoch die Gesamtheit und kommt zu einer vorsichtigen Bewertung.
+All these actions are necessary to implement a system‑wide ad blocker. However, CrowdStrike considers the overall picture and arrives at a cautious verdict.
 
 ---
 
 ## 🧬 3. MaxSecure – `DTrojan.Malware.300983.susgen`
 
-**Typ:** Generische Signatur (`.susgen`).  
-Solche Erkennungen basieren meist auf **statischen Merkmalen** der Datei, z. B. importierten API‑Funktionen und Byte‑Mustern.
+**Type:** Generic signature (`.susgen`).  
+Such detections are usually based on **static characteristics** of the file, e.g. imported API functions and byte patterns.
 
-Hier sind die wahrscheinlichen Auslöser:
+Here are the likely triggers:
 
-- **`CreateMutex`** – `checkSingleInstance()` nutzt `windows.CreateMutex`, um eine doppelte Ausführung zu verhindern. Viele Trojaner verwenden Mutexe zur Vermeidung von Mehrfachinstanzen.
-- **`ShellExecute`**, **`WriteFile`** (in Registry), **`MessageBox`** – typische API‑Aufrufe für Interaktion mit dem System, die auch in Malware oft vorkommen.
-- **Eingebettete Dateien** (die Icons) sind harmlos, aber in Kombination mit den obigen APIs schlägt die generische Engine an.
+- **`CreateMutex`** – `checkSingleInstance()` uses `windows.CreateMutex` to prevent multiple instances from running simultaneously. Many Trojans use mutexes to avoid multiple executions.
+- **`ShellExecute`**, **`WriteFile`** (in the registry), **`MessageBox`** – typical API calls for system interaction that also frequently appear in malware.
+- **Embedded files** (the icons) are harmless, but in combination with the above APIs, the generic engine raises an alert.
 
-Die Signatur `300983` ist eine interne ID bei MaxSecure; sie erkennt ein bestimmtes Muster, das in Ihrer Binary zufällig auftritt.
+The signature `300983` is an internal ID at MaxSecure; it detects a specific pattern that happens to occur in your binary.
 
 ---
 
 ## 🧪 4. Symantec – `ML.Attribute.HighConfid`
 
-**Typ:** Maschinelles Lernen mit hoher Konfidenz.  
-Symantec analysiert nicht nur statische Eigenschaften, sondern auch **Verhaltens‑Attributen** zur Laufzeit (dynamische Analyse in der Cloud).
+**Type:** Machine-learning-based detection with high confidence.  
+Symantec not only analyses static properties, but also **behavioural attributes** at runtime (dynamic analysis in the cloud).
 
-**Hauptgründe:**
+**Main reasons:**
 
-1. **PowerShell‑Befehle mit `HideWindow`**  
-   Symantecs Modell hat gelernt, dass legitime Software selten PowerShell **fensterlos** mit Admin‑Rechten ausführt. Ihre App tut dies mehrfach:
-   - `findActiveInterface()` (Netzwerkerkennung)
-   - `saveOriginalDNSSettings()` (DNS auslesen)
-   - `runAsAdmin()` (Fallback‑PowerShell)
+1. **PowerShell commands with `HideWindow`**  
+   Symantec’s model has learned that legitimate software rarely executes PowerShell **without a window** and with admin rights. Your app does this multiple times:
+   - `findActiveInterface()` (network discovery)
+   - `saveOriginalDNSSettings()` (reading DNS configuration)
+   - `runAsAdmin()` (fallback PowerShell)
 
-2. **Netzwerkaktivität + Systemmodifikation**  
-   Die Kombination aus eigenem DNS‑Server, externen HTTP‑Downloads (Blocklisten) und der gleichzeitigen Änderung von Netzwerkeinstellungen ist ein starkes Signal für Symantecs ML.
+2. **Network activity + system modification**  
+   The combination of a custom DNS server, external HTTP downloads (blocklists), and simultaneous modification of network settings is a strong signal for Symantec’s ML.
 
-3. **Verschleierter Browserstart**  
-   `openBrowser()` startet den Standardbrowser mit `rundll32` – einer Methode, die auch von Malware verwendet wird, um stille HTTP‑Anfragen zu senden.
+3. **Obfuscated browser launch**  
+   `openBrowser()` starts the default browser using `rundll32` – a method also employed by malware to send silent HTTP requests.
 
 ---
 

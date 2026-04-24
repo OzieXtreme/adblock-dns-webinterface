@@ -40,7 +40,7 @@
 - Flusher interval increased from 15s to 60s (production‑ready).
 - Proper event binding for log refresh and clear buttons (prevents double‑function definitions).
 
-### 🐛 Bug Fixes
+### 🐛 Last Bug Fixes
 - Fixed tray status showing “Stopped” after successful start.
 - Resolved crash on startup due to nil pointer when accessing tray items before creation.
 - Corrected log real‑time view event bindings and duplicate clear‑log function.
